@@ -2,7 +2,7 @@
 
 ## Description
 This project is used as a playground for trying out different stuff during competence
-learning.
+learning of LLM RAG and Agents.
 
 ## Table of Contents
 - [Installation](#installation)
