@@ -5,6 +5,8 @@
 pip install langchain-community pymupdf
 pip install langchain-openai
 pip install langchain-text-splitters
+pip install chromadb langchain-chroma
+pip install langchain_community faiss-cpu
 #pip install sentence-transformers
 """
 
@@ -14,9 +16,11 @@ import os
 # from langchain.text_splitter import CharacterTextSplitter
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
+# from langchain_chroma import Chroma
 # from pprint import pprint
 # from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
@@ -130,27 +134,83 @@ all_pages_splitted = [text_splitter.split_text(page) for page in all_pages]
 # Flatten the list if you want a single list of all chunks
 all_pages_splitted = [chunk for sublist in all_pages_splitted for chunk in sublist]
 
-print(f"Splitted text - no of chunks: {len(all_pages_splitted)}")
-print(type(all_pages_splitted))
-print(type(all_pages_splitted[0]))
+print(f"\nSplitted text - no of chunks: {len(all_pages_splitted)}")
+print(f"Splitted text type: {type(all_pages_splitted)}")
+print(f"Splitted text element type: {type(all_pages_splitted[0])}")
 # print(f"Splitted text:\n {all_pages_splitted}\n")
 
-###########
-# Embedding
-###########
+########################
+# Embedding using OpenAI
+########################
 
 # Initialize OpenAI Embeddings
 openai_embedding = OpenAIEmbeddings(model="text-embedding-ada-002")
 
 # Query to embed
-query = "What does Paul like with Volvo Cars?"
+# query = "What does Paul like with Volvo Cars?"
 
 # Get embedding vector for query
-embedding_vector_query = openai_embedding.embed_query(query)
-print(f"Embedding vector dimension for query: {len(embedding_vector_query)}")
+# embedding_vector_query = openai_embedding.embed_query(query)
+# print(f"Embedding vector dimension for query: {len(embedding_vector_query)}")
 
 # Get embedding vector for search docs
-embedding_vector_docs = openai_embedding.embed_documents(all_pages_splitted)
-print(f"No of total Embedding vectors for search docs: {len(embedding_vector_docs)}")
-print(f"Embedding vector dimension for search docs: {len(embedding_vector_docs[0])}")
+# embedding_vector_docs = openai_embedding.embed_documents(all_pages_splitted)
+# print(f"No of total Embedding vectors for search docs: {len(embedding_vector_docs)}")
+# print(f"Embedding vector dimension for search docs: {len(embedding_vector_docs[0])}")
 # print(f"Embedding vector example for search docs: {embedding_vector_docs[0]}")
+
+########################
+# Vector store Chroma DB
+########################
+"""
+# Initialize Vector Chroma DB with OpenAI Embeddings
+vector_store_chroma = Chroma(
+    collection_name="PaulsCVvectorstore",
+    embedding_function=openai_embedding,
+)
+
+# Create an ID list that will be used to assign each chunk a known unique identifier
+ids = [str(i) for i in range(0, len(all_pages_splitted))]
+
+# Store text chunks in Vector DB
+vector_store_chroma.add_texts(all_pages_splitted, ids=ids)
+print(f"\nNumber of added text chunks to Chroma vector DB: {len(ids)}")
+print(f"\nText chunk example(s) from Chroma vector DB: {vector_store_chroma.get(ids=['0'])}")
+
+# Query the Vector Store
+query = "What does Paul like with Volvo Cars?"
+retrieved_docs = vector_store_chroma.similarity_search(
+    query, k=3
+)  # Retrieve top 3 matches
+
+# Print Retrieved Results
+for i, doc in enumerate(retrieved_docs, 1):
+    print(f"\nSimilarity match {i}: {doc.page_content}")
+"""
+
+########################
+# Vector store FAISS DB
+########################
+
+# Create an ID list that will be used to assign each chunk a known unique identifier
+ids = [str(i) for i in range(0, len(all_pages_splitted))]
+
+# Initialize Vector FAISS DB with OpenAI Embeddings and store texts chunks
+vector_store_faiss = FAISS.from_texts(all_pages_splitted, openai_embedding, ids=ids)
+
+# Store text chunks in Vector DB
+# vector_store.add_texts(all_pages_splitted, ids=ids)
+print(f"\nNumber of added text chunks to FAISS vector DB: {len(ids)}")
+print(
+    f"\nText chunk example(s) from FAISS vector DB: {vector_store_faiss.get_by_ids(['0'])}"
+)
+
+# Query the Vector Store
+query = "What does Paul like with Volvo Cars?"
+retrieved_docs = vector_store_faiss.similarity_search(
+    query, k=3
+)  # Retrieve top 3 matches
+
+# Print Retrieved Results
+for i, doc in enumerate(retrieved_docs, 1):
+    print(f"\nSimilarity match {i}: {doc.page_content}")
