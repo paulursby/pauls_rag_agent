@@ -10,17 +10,20 @@ pip install langchain_community faiss-cpu
 #pip install sentence-transformers
 """
 
+import logging
 import os
 
 # from langchain_core.runnables import RunnableLambda
 # from langchain.text_splitter import CharacterTextSplitter
+from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_chroma import Chroma
 
-# from langchain_chroma import Chroma
 # from pprint import pprint
 # from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.document_loaders import PyMuPDFLoader
-from langchain_community.vectorstores import FAISS
+
+# from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
@@ -162,7 +165,7 @@ openai_embedding = OpenAIEmbeddings(model="text-embedding-ada-002")
 ########################
 # Vector store Chroma DB
 ########################
-"""
+
 # Initialize Vector Chroma DB with OpenAI Embeddings
 vector_store_chroma = Chroma(
     collection_name="PaulsCVvectorstore",
@@ -175,8 +178,13 @@ ids = [str(i) for i in range(0, len(all_pages_splitted))]
 # Store text chunks in Vector DB
 vector_store_chroma.add_texts(all_pages_splitted, ids=ids)
 print(f"\nNumber of added text chunks to Chroma vector DB: {len(ids)}")
-print(f"\nText chunk example(s) from Chroma vector DB: {vector_store_chroma.get(ids=['0'])}")
+"""
+print(
+    f"\nText chunk example(s) from Chroma vector DB: {vector_store_chroma.get(ids=['0'])}"
+)
+"""
 
+"""
 # Query the Vector Store
 query = "What does Paul like with Volvo Cars?"
 retrieved_docs = vector_store_chroma.similarity_search(
@@ -191,7 +199,7 @@ for i, doc in enumerate(retrieved_docs, 1):
 ########################
 # Vector store FAISS DB
 ########################
-
+"""
 # Create an ID list that will be used to assign each chunk a known unique identifier
 ids = [str(i) for i in range(0, len(all_pages_splitted))]
 
@@ -210,6 +218,41 @@ query = "What does Paul like with Volvo Cars?"
 retrieved_docs = vector_store_faiss.similarity_search(
     query, k=3
 )  # Retrieve top 3 matches
+
+# Print Retrieved Results
+for i, doc in enumerate(retrieved_docs, 1):
+    print(f"\nSimilarity match {i}: {doc.page_content}")
+"""
+
+###########
+# Retriever
+###########
+
+# query = "What does Paul like with Volvo Cars?"
+query = "What languages does Paul speak fluently?"
+
+# Distance-based vector database retrieval
+"""
+retriever = vector_store_chroma.as_retriever(
+    search_type="similarity",  # similarity(default), mmr or similarity_score_threshold
+    # search_kwargs={"k": 2, "score_threshold": 0.4},  # Default=4
+)
+"""
+
+# Multi-Query Retriever
+retriever = MultiQueryRetriever.from_llm(
+    retriever=vector_store_chroma.as_retriever(), llm=openai_llm
+)
+logging.basicConfig()
+logging.getLogger("langchain.retrievers.multi_query").setLevel(logging.INFO)
+
+# Self-Querying Retriever
+# TBD
+
+# Parent Document Retriever
+# TBD
+
+retrieved_docs = retriever.invoke(query)
 
 # Print Retrieved Results
 for i, doc in enumerate(retrieved_docs, 1):
