@@ -15,6 +15,8 @@ import os
 
 # from langchain_core.runnables import RunnableLambda
 # from langchain.text_splitter import CharacterTextSplitter
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -24,7 +26,7 @@ from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyMuPDFLoader
 
 # from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 ################
@@ -229,7 +231,7 @@ for i, doc in enumerate(retrieved_docs, 1):
 ###########
 
 # query = "What does Paul like with Volvo Cars?"
-query = "What languages does Paul speak fluently?"
+query = "How many years of experince does Paul have from telecom Industry?"
 
 # Distance-based vector database retrieval
 """
@@ -257,3 +259,35 @@ retrieved_docs = retriever.invoke(query)
 # Print Retrieved Results
 for i, doc in enumerate(retrieved_docs, 1):
     print(f"\nSimilarity match {i}: {doc.page_content}")
+
+
+###########
+# Q&A chain
+###########
+
+"""
+# Use retriever in a question-answering chain
+qa_chain = RetrievalQA.from_chain_type(llm=openai_llm, retriever=retriever)
+
+# Ask a question
+response = qa_chain.run(query)
+print(f"\nResponse from Q&A chain: {response}")
+"""
+
+system_prompt = (
+    "Use the given context to answer the question. "
+    "If you don't know the answer, say you don't know. "
+    "Use three sentence maximum and keep the answer concise. "
+    "Context: {context}"
+)
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system_prompt),
+        ("human", "{input}"),
+    ]
+)
+question_answer_chain = create_stuff_documents_chain(openai_llm, prompt)
+chain = create_retrieval_chain(retriever, question_answer_chain)
+
+response = chain.invoke({"input": query})
+print(f"\nResponse from Q&A chain: {response['answer']}")
