@@ -265,15 +265,6 @@ for i, doc in enumerate(retrieved_docs, 1):
 # Q&A chain
 ###########
 
-"""
-# Use retriever in a question-answering chain
-qa_chain = RetrievalQA.from_chain_type(llm=openai_llm, retriever=retriever)
-
-# Ask a question
-response = qa_chain.run(query)
-print(f"\nResponse from Q&A chain: {response}")
-"""
-
 system_prompt = (
     "Use the given context to answer the question. "
     "If you don't know the answer, say you don't know. "
