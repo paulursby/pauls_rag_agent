@@ -2,14 +2,16 @@
 
 """Required packages
 pip install langchain-community pymupdf
-pip install langchain-openai
 pip install langchain-text-splitters
 pip install chromadb langchain-chroma
+pip install gradio
+pip install langchain langchain-openai
 """
 
 import logging
 import os
 
+import gradio as gr
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.retrievers.multi_query import MultiQueryRetriever
@@ -20,6 +22,12 @@ from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+# Setting default logging level for modules not having a specified log level defined
+logging.basicConfig(level=logging.INFO)
+# Configure logging for this module
+logger = logging.getLogger("paul_CV_QAbot_logger")
+logger.setLevel(logging.DEBUG)
 
 
 # Create an OpenAI GPT-4o model
@@ -34,7 +42,7 @@ def create_openai_llm_model():
 
 # Document loader
 def document_loader(rag_doc_dir):
-    # list and load all elements of type pdf
+    # List and load all elements of type pdf
     loaded_pages = [
         page.page_content  # Extract text from Document
         for pdf in os.listdir(rag_doc_dir)
@@ -42,9 +50,7 @@ def document_loader(rag_doc_dir):
         for page in PyMuPDFLoader(os.path.join(rag_doc_dir, pdf)).load()
     ]
 
-    # Print results
-    # print(f"Loaded {len(all_pages)} documents.\n")
-    # pprint(all_pages[:])
+    logger.info(f"Loaded {len(loaded_pages)} documents.")
     return loaded_pages
 
 
@@ -61,9 +67,9 @@ def text_splitter(data):
     # Flatten the list if you want a single list of all chunks
     flatten_chunks = [chunk for sublist in orig_chunks for chunk in sublist]
 
-    print(f"\nSplitted data - no of chunks: {len(flatten_chunks)}")
-    print(f"Splitted data - type: {type(flatten_chunks)}")
-    print(f"Splitted data element - type: {type(flatten_chunks[0])}")
+    logger.info(f"Splitted data - no of chunks: {len(flatten_chunks)}")
+    logger.debug(f"Splitted data - type: {type(flatten_chunks)}")
+    logger.debug(f"Splitted data element - type: {type(flatten_chunks[0])}")
     return flatten_chunks
 
 
@@ -83,15 +89,15 @@ def vector_database(chunks):
 
     # Create an ID list that will be used to assign each chunk a known unique identifier
     ids = [str(i) for i in range(0, len(chunks))]
-
     # Store text chunks in Vector DB
     vector_db.add_texts(chunks, ids=ids)
-    print(f"\nNumber of added data chunks to Chroma vector DB: {len(ids)}")
+
+    logger.info(f"Number of added data chunks to Chroma vector DB: {len(ids)}")
     return vector_db
 
 
 ## Retriever
-def retriever(rag_doc_dir, openai_llm):
+def retriever_multi_query(rag_doc_dir, openai_llm):
     loaded_pages = document_loader(rag_doc_dir)
     chunks = text_splitter(loaded_pages)
     vector_db = vector_database(chunks)
@@ -100,9 +106,6 @@ def retriever(rag_doc_dir, openai_llm):
     retriever = MultiQueryRetriever.from_llm(
         retriever=vector_db.as_retriever(), llm=openai_llm
     )
-
-    logging.basicConfig()
-    logging.getLogger("langchain.retrievers.multi_query").setLevel(logging.INFO)
     return retriever
 
 
@@ -121,14 +124,52 @@ def retriever_qa_chain(rag_doc_dir, query, openai_llm):
         ]
     )
     question_answer_chain = create_stuff_documents_chain(openai_llm, prompt)
-    retriever_qa = retriever(rag_doc_dir, openai_llm)
+    retriever_qa = retriever_multi_query(rag_doc_dir, openai_llm)
+
+    # Invoke retriever separately to get the retrieved documents
+    retrieved_docs = retriever_qa.invoke(query)
+    retrieved_context = "\n\n".join([doc.page_content for doc in retrieved_docs])
+    # Log the retrieved context
+    logger.debug(f"Retrieved context for query '{query}':\n{retrieved_context}")
+
     chain = create_retrieval_chain(retriever_qa, question_answer_chain)
 
     response = chain.invoke({"input": query})
-    print(f"\nResponse from Q&A chain: {response['answer']}")
+    logger.info(f"Response from Q&A chain: {response['answer']}")
+    return response["answer"]
+
+
+def retriever_qa_chain_interface(file, query):
+    openai_llm = create_openai_llm_model()
+    response = retriever_qa_chain(file, query, openai_llm)
     return response
 
 
+# Create Gradio interface
+rag_application = gr.Interface(
+    fn=retriever_qa_chain_interface,
+    allow_flagging="never",
+    inputs=[
+        # gr.File(label="Upload PDF File", file_count="single", file_types=[".pdf"], type="filepath"),
+        gr.Textbox(
+            label="Path to RAG data files", value="./RAG_data/CV_Qabot/", lines=1
+        ),  # Default value added
+        gr.Textbox(
+            label="Input Query", lines=2, placeholder="Type your question here..."
+        ),
+    ],
+    outputs=gr.Textbox(
+        label="Output", placeholder="Chatbot answer will appear here..."
+    ),
+    title="Pauls CV RAG Chatbot",
+    description="Add the path to the RAG data file(s) and ask any question. The chatbot will try to answer using the provided document.",
+)
+
+# Launch the app
+rag_application.launch(server_name="0.0.0.0", server_port=7860)
+
+
+""" Running application without GUI
 # OpenAI GPT-4o model
 openai_llm = create_openai_llm_model()
 
@@ -137,6 +178,7 @@ rag_doc_dir = "./RAG_data/CV_Qabot/"
 
 # User query
 query = "What does Paul like with Volvo Cars?"
-# query = "How many years of experince does Paul have from telecom Industry?"
+# query = "How many years of experience does Paul have from telecom Industry?"
 
 response = retriever_qa_chain(rag_doc_dir, query, openai_llm)
+"""
