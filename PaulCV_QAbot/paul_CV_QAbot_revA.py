@@ -40,7 +40,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 # pages = loader.load()
 
 # Directory containing PDFs
-pdf_directory = "./RAG_data/"
+pdf_directory = "./RAG_data/CV_Qabot/"
 
 # Load all PDFs
 """
