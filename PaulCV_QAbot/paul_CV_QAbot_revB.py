@@ -23,11 +23,20 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
+# from langchain_core.tracers.context import tracing_v2_enabled
+
 # Setting default logging level for modules not having a specified log level defined
 logging.basicConfig(level=logging.INFO)
 # Configure logging for this module
 logger = logging.getLogger("paul_CV_QAbot_logger")
 logger.setLevel(logging.DEBUG)
+
+
+# Content in ~/.bashrc to activate Langsmith tracing
+# export LANGSMITH_TRACING=true
+# export LANGSMITH_ENDPOINT="https://eu.api.smith.langchain.com"
+# export LANGSMITH_API_KEY="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"
+# export LANGSMITH_PROJECT="default-pauls-rags"
 
 
 # Create an OpenAI GPT-4o model
@@ -134,6 +143,8 @@ def retriever_qa_chain(rag_doc_dir, query, openai_llm):
 
     chain = create_retrieval_chain(retriever_qa, question_answer_chain)
 
+    # A context manager for tracing a specific block of code.
+    # with tracing_v2_enabled():
     response = chain.invoke({"input": query})
     logger.info(f"Response from Q&A chain: {response['answer']}")
     return response["answer"]
