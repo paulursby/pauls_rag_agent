@@ -1,11 +1,11 @@
-# Play around with RAG and Agent using Langchain framework
+# Play around with RAG and Agent using Langchain framework,
+# using my CV and CL as RAG data
 
 """Required packages
 pip install langchain-community pymupdf
-pip install langchain-text-splitters
 pip install chromadb langchain-chroma
-pip install gradio
 pip install langchain langchain-openai
+pip install gradio
 """
 
 import logging
