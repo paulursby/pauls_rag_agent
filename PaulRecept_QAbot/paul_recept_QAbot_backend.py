@@ -1,13 +1,11 @@
-# Play around with RAG and Agent using Langchain framework,
-# using my Recept collection as RAG data
+# Play around with RAG and Agent using Langchain framework invl LCEL,
+# using some of my Recept collection as RAG data
+# This is backend of the Q&Abot
 
 """Required packages
 pip install langchain langchain-openai
 pip install langchain_community beautifulsoup4
 pip install chromadb langchain-chroma
-
-?pip install langchain-text-splitters
-?pip install gradio
 """
 
 import logging
@@ -25,7 +23,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 # Setting default logging level for modules not having a specified log level defined
 logging.basicConfig(level=logging.INFO)
 # Configure logging for this module
-logger = logging.getLogger("paul_recept_QAbot_logger")
+logger = logging.getLogger("paul_recept_QAbot_backend_logger")
 logger.setLevel(logging.DEBUG)
 
 # Content in ~/.bashrc to activate Langsmith tracing
@@ -113,6 +111,7 @@ def text_splitter(data):
     logger.info(f"Splitted data - no of chunks: {len(flatten_chunks)}")
     logger.debug(f"Splitted data - type: {type(flatten_chunks)}")
     logger.debug(f"Splitted data element - type: {type(flatten_chunks[0])}")
+
     return flatten_chunks
 
 
@@ -134,8 +133,8 @@ def vector_database(chunks):
     ids = [str(i) for i in range(0, len(chunks))]
     # Store text chunks in Vector DB
     vector_db.add_texts(chunks, ids=ids)
-
     logger.info(f"Number of added data chunks to Chroma vector DB: {len(ids)}")
+
     return vector_db
 
 
@@ -152,6 +151,7 @@ def create_vectore_store_retriever(vector_db):
         },
     )
     logger.info("Retriever successfully created from vector database")
+
     return retriever
 
 
@@ -175,7 +175,6 @@ def search_data_vector_store(inputs):
 
     # Use the retriever to get documents
     docs = search_vector_store(retriever, query)
-    # context = "\n\n".join([doc.page_content for doc in docs])
 
     return {"context": docs, "input": query}
 
@@ -199,12 +198,6 @@ prompt = ChatPromptTemplate.from_messages(
 # Creating RAG chain
 ####################
 
-# List of URLs to scrape
-urls = [
-    "https://vivavinomat.se/recept/italiensk-bongryta/",
-    "https://folkofolk.se/vin/recept/grillad-tonfisk-med-mango-och-avokadosalsa",
-]
-
 document_loader_runnable = RunnableLambda(document_loader)
 clean_docs_runnable = RunnableLambda(clean_docs)
 text_splitter_runnable = RunnableLambda(text_splitter)
@@ -219,16 +212,26 @@ rag_chain = (
 )
 logger.info("RAG pipeline succesfully created")
 
+""" To be used if running application without GUI
+# List of URLs to scrape
+urls = [
+    "https://vivavinomat.se/recept/italiensk-bongryta/",
+    "https://folkofolk.se/vin/recept/grillad-tonfisk-med-mango-och-avokadosalsa",
+]
+
 vector_db = rag_chain.invoke(urls)
 logger.info("RAG pipeline succesfully executed")
+"""
 
 ####################
 # Creating Q&A chain
 ####################
 
+""" To be used if running application without GUI
 # Create retriever from the vector store
 retriever = create_vectore_store_retriever(vector_db)
 logger.info("VectorStoreRetriever successfully created")
+"""
 
 search_data_vector_store_runnable = RunnableLambda(search_data_vector_store)
 
@@ -241,6 +244,7 @@ qa_chain = (
 )
 logger.info("Q&A pipeline successfully created")
 
+""" To be used if running application without GUI
 # Execute the Q&A chain
 query = "vad ska man servera böngrytan med?"
 response = qa_chain.invoke({"query": query, "retriever": retriever})
@@ -249,3 +253,4 @@ logger.info(
     f"User query: {query}\n"
     f"Bot response: {response}"
 )
+"""
