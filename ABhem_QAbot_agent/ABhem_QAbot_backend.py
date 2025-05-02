@@ -1,5 +1,5 @@
 # Play around with Agents using LangGraph and TavilySearch
-# This is backend of the Agent
+# This is backend of the AB Hem Q&A bot/chat agent
 
 """Required packages
 pip install langgraph langchain-core langchain-openai langchain-community tavily-python langgraph-checkpoint-sqlite
@@ -31,7 +31,12 @@ logger.setLevel(logging.DEBUG)
 # with tracing_v2_enabled():
 
 # Define the search tool
-tool = TavilySearchResults(max_results=2, include_domains=["ab-hem.se"])
+tool = TavilySearchResults(
+    max_results=10,
+    include_domains=["ab-hem.se"],
+    search_depth="advanced",
+    # include_raw_content=True,
+)
 
 
 # Create Agent State functionality
@@ -79,37 +84,69 @@ class Agent:
         return {"messages": results}
 
 
-# Define System prompt
-prompt = """You are a smart research assistant. Use the search engine to look up information. \
-You are allowed to make multiple calls (either together or in sequence). \
-Only look up information when you are sure of what you want. \
-If you need to look up some information before asking a follow up question, you are allowed to do that!
-"""
+# Function to run the agent and return the answer
+def run_agent(system_prompt, user_query):
+    """
+    Run the agent with the given system prompt and user query
 
-prompt2 = """You are a smart research assistant. Use the search engine to look up information. \
-You are allowed to make multiple calls (either together or in sequence). \
-Only look up information when you are sure of what you want. \
-Look up information only using.
-If you need to look up some information before asking a follow up question, you are allowed to do that!
+    Args:
+        system_prompt (str): The system prompt for the assistant
+        user_query (str): The user's question
 
-"""
+    Returns:
+        str: The answer to the user's query
+    """
+    # Define model
+    model = ChatOpenAI(model="gpt-4o")
+
+    # Create messages
+    messages = [HumanMessage(content=user_query)]
+
+    # Final answer placeholder
+    user_answer = ""
+
+    with SqliteSaver.from_conn_string(":memory:") as memory:
+        # Creating the Agent
+        abot = Agent(model, [tool], system=system_prompt, checkpointer=memory)
+
+        # Create the Graph stream
+        thread = {"configurable": {"thread_id": "1"}}
+
+        # Track the final non-tool message
+        final_message = None
+
+        for event in abot.graph.stream({"messages": messages}, thread):
+            for v in event.values():
+                for message in v["messages"]:
+                    # Print message info for debugging
+                    print(f"\nMessage type: {type(message).__name__}")
+                    print(f"Content: {message.content}")
+
+                    # If there are tool calls, print those separately
+                    if hasattr(message, "tool_calls") and message.tool_calls:
+                        print(f"Tool calls: {message.tool_calls}")
+                    else:
+                        # Save the message if it's not a tool call message
+                        final_message = message
+
+    # Get the final answer
+    if final_message:
+        user_answer = final_message.content
+        print(f"\nAnswer to user query:\n{user_answer}")
+
+    return user_answer
 
 
-# Define model
-model = ChatOpenAI(model="gpt-4o")
+# This section will only run if the script is executed directly
+if __name__ == "__main__":
+    # Default system prompt
+    DEFAULT_PROMPT = """You are a smart research assistant. Use the search engine to look up information. \
+    You are allowed to make multiple calls (either together or in sequence). \
+    Only look up information when you are sure of what you want. \
+    If you need to look up some information before asking a follow up question, you are allowed to do that!
+    """
 
-with SqliteSaver.from_conn_string(":memory:") as memory:
-    # Creating the Agent
-    abot = Agent(model, [tool], system=prompt, checkpointer=memory)
-
-    # Create the user query
-    messages = [
-        HumanMessage(content="Vad ska jag tänka på när jag flyttar ut hos AB-hem")
-    ]
-
-    # Create the Graph stream
-    thread = {"configurable": {"thread_id": "1"}}
-
-    for event in abot.graph.stream({"messages": messages}, thread):
-        for v in event.values():
-            print(v["messages"])
+    # Example usage
+    query = "Vad är telefonnumret för felanmälan till AB-hem?"
+    result = run_agent(DEFAULT_PROMPT, query)
+    print("\nFinal answer:", result)

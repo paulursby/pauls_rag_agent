@@ -1,0 +1,3 @@
+Filtrera på minimum results.score on answers
+Send a mail when no answer is found.
+Make a chatbot instead of QA bot
