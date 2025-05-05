@@ -140,10 +140,13 @@ def run_agent(system_prompt, user_query):
 # This section will only run if the script is executed directly
 if __name__ == "__main__":
     # Default system prompt
-    DEFAULT_PROMPT = """You are a smart research assistant. Use the search engine to look up information. \
-    You are allowed to make multiple calls (either together or in sequence). \
-    Only look up information when you are sure of what you want. \
+    DEFAULT_PROMPT = """You are a smart research assistant. Use the search engine to look up information. 
+    You are allowed to make multiple calls (either together or in sequence). 
+    Only look up information when you are sure of what you want. 
     If you need to look up some information before asking a follow up question, you are allowed to do that!
+    All questions are about the company AB-hem. 
+    Search for an answer on AB Hems homepage only, which is https://ab-hem.se/. 
+    If no answer is found on AB Hems homepage, then answer with "Hittar tyvärr inget svar på din fråga, men skicka gärna din fråga till info@ab-hem.se, så svarar vi så fort vi kan."
     """
 
     # Example usage

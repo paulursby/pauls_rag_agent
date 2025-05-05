@@ -1,3 +1,9 @@
+Feature - "Send a mail when no answer is found - Backend"
+    - Evalauate all printout and change to logmessages instead
+    - Evaluate valid user email format
+    - Make password secret somehow and not visible in code
+
+
+Feature - "Send a mail when no answer is found - Frontend"
 Filtrera på minimum results.score on answers
-Send a mail when no answer is found.
 Make a chatbot instead of QA bot
