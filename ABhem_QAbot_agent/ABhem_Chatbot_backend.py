@@ -146,10 +146,14 @@ if __name__ == "__main__":
     If you need to look up some information before asking a follow up question, you are allowed to do that!
     All questions are about the company AB-hem. 
     Search for an answer on AB Hems homepage only, which is https://ab-hem.se/. 
-    If no answer is found on AB Hems homepage, then answer with "Hittar tyvärr inget svar på din fråga, men skicka gärna din fråga till info@ab-hem.se, så svarar vi så fort vi kan."
+    If no answer is found on AB Hems homepage, then answer and ask for users mail adress using this message: 
+    "Vi kan tyvärr inte svara på din fråga nu, men svara gärna med din email adress så svarar vi via den så fort vi kan."
+    When users answers with a valid email adress format, then send this final message:
+    "Tack för din email adress." 
     """
 
     # Example usage
-    query = "Vad är telefonnumret för felanmälan till AB-hem?"
+    # query = "Vad är telefonnumret för felanmälan till AB-hem?"
+    query = "Vem äger AB Hem?"
     result = run_agent(DEFAULT_PROMPT, query)
     print("\nFinal answer:", result)
