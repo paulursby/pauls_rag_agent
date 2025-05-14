@@ -1,9 +1,11 @@
 Feature - "Send a mail when no answer is found - Backend"
-    - Evalauate all printout and change to logmessages instead
     - Evaluate valid user email format
-    - Make password secret somehow and not visible in code
 
+Make password secret somehow and not visible in code &
+add all config parameters in a config file(s).
 
 Feature - "Send a mail when no answer is found - Frontend"
+
 Filtrera på minimum results.score on answers
+
 Make a chatbot instead of QA bot
