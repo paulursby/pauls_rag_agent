@@ -1,8 +1,8 @@
-# This is backend module of the AB Hem Chat bot agent, using e.g ChatOpenAI, LangChain,
-# LangGraph and TavilySearch capabilities.
-
 """
-Precondition is that this packages are installed:
+This is the backend module of the AB Hem Chat bot agent, using e.g ChatOpenAI,
+LangChain, LangGraph and TavilySearch capabilities.
+
+Precondition is that these packages are pip installed:
 pip install langgraph langchain-core langchain-openai langchain-community
 tavily-python langgraph-checkpoint-sqlite
 """
@@ -27,6 +27,7 @@ from langchain_core.messages import (
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
+from lib.helper_functions import is_valid_email
 
 # Define the directory where you want to store the log file
 log_directory = "/home/paulur/python-projects/pauls_rag_agent/Log_files"
@@ -41,12 +42,12 @@ log_filepath = os.path.join(log_directory, "ABhem_Chatbot_backend.log")
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    filename=log_filepath,
+    # filename=log_filepath,
 )
 
 # Configure logging for this module
 logger = logging.getLogger("ABhem_Chatbot_backend_logger")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 """
 Content in ~/.bashrc to activate Langsmith tracing
@@ -218,26 +219,53 @@ class Agent:
 
     def collect_email_address(self, state: AgentState):
         """
-        Collect the user's email address for follow-up on unresolved queries.
+        Collect and validate the user's email address for follow-up on unresolved queries.
 
-        Prompts the user to input their email address through the console
-        (temporary solution until frontend implementation).
+        Prompts the user to input their email address with validation, allowing multiple
+        attempts. The function supports internationalized feedback in Swedish and
+        provides detailed validation error messages to the user.
 
         Args:
             state (AgentState): The current state containing messages.
 
         Returns:
-            dict: Dictionary with updated messages and the collected email address.
+            dict: Dictionary containing:
+                - messages (list): List with a single ChatMessage indicating the outcome
+                  (either successful validation or too many failed attempts)
+                - user_email_address (str): The collected email address if valid;
+                  otherwise, the last attempt (even if invalid)
         """
-        # TODO: Temoprary solution. The frontend shall collect the users email address
-        user_email_adress = input(
-            "Vänligen ange din e-postadress så återkommer vi med svar så snart som möjligt: "
-        )
-        email_request = ChatMessage(
-            role="system_event",
-            content="User has provided an email address with valid format.",
-        )
-        logger.info("User has provided an email address with valid format.")
+        # TODO: max_attempt shall be config parameter
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            user_email_adress = input(
+                "Vänligen ange din e-postadress så återkommer vi med svar så snart som möjligt: "
+            )
+            is_valid, message = is_valid_email(user_email_adress)
+
+            if is_valid:
+                email_request = ChatMessage(
+                    role="system_event",
+                    content="User has provided a valid email address.",
+                )
+                logger.info("User has provided a valid email address.")
+                break
+            else:
+                attempts_left = max_attempts - attempt - 1
+                print(f"Ogiltig e-postadress. {message}")
+                if attempts_left > 0:
+                    print(f"Du har {attempts_left} försök kvar.")
+                logger.debug(
+                    f"Entered email address: {user_email_adress} is invalid. {message}"
+                )
+
+            if attempt == (max_attempts - 1):
+                user_email_adress = None
+                email_request = ChatMessage(
+                    role="system_event",
+                    content="User has provided invalid email addresses too many times.",
+                )
+                logger.info("User has provided invalid email addresses too many times.")
 
         return {"messages": [email_request], "user_email_address": user_email_adress}
 
@@ -250,15 +278,32 @@ class Agent:
 
         Args:
             state (AgentState): The current state containing messages and user email.
+                Expected to contain:
+                - 'user_email_address': String with user's email (from
+                collect_email_address)
+                - 'messages': List of message objects including at least one
+                HumanMessage
 
         Returns:
-            dict: Dictionary with updated messages and email sending status.
+            dict: Dictionary containing:
+                - messages (list): List with a single ChatMessage indicating the outcome
+                - email_sent (bool): True if email was sent successfully, False
+                otherwise
+
+        Error Handling:
+            - Missing/invalid email address: Returns with email_sent=False and
+            appropriate message
+            - SMTP/connection errors: Catches exceptions, logs errors, returns with
+            email_sent=False
+            - Missing user query: Uses "No query found" as fallback if no HumanMessage
+            is found
         """
+        # TODO: Shall be config parameter
         back_office_email_address = "paulursby@hotmail.com"
         # back_office_email_address = "ulrik@baard.se"
 
         # Get user query and email from state
-        user_email_address = state.get("user_email_address", "No email provided")
+        user_email_address = state.get("user_email_address", "No user email provided")
 
         # Extract the original user query, which is the first HumanMessage in the
         # messages list
@@ -268,7 +313,22 @@ class Agent:
                 user_query = message.content
                 break
 
-        # Create email
+        # No user email can be sent due to no valid user email address provided
+        if user_email_address == "No user email provided" or not user_email_address:
+            # Add a state message that no user email address is provided
+            confirmation = ChatMessage(
+                role="system_event",
+                content="Email message with user query can not be sent due to no valid "
+                "user email address provided",
+            )
+            logger.error(
+                "Email message with user query can not be sent due to no valid user "
+                "email address provided."
+            )
+
+            return {"messages": [confirmation], "email_sent": False}
+
+        # Create email if valid email address is entered by user
         email = EmailMessage()
         email["From"] = "paulursby@gmail.com"  # Replace with your sending email
         email["To"] = back_office_email_address
@@ -303,7 +363,7 @@ class Agent:
                     "back-office",
                 )
                 logger.info(
-                    "Email message with user query is succesfully sent to back-office"
+                    "Email message with user query is succesfully sent to back-office."
                 )
 
                 return {"messages": [confirmation], "email_sent": True}
@@ -314,7 +374,8 @@ class Agent:
                     content="Email message with user query sent to back-office failed",
                 )
                 logger.error(
-                    f"Email message with user query sent to back-office failed: {str(e)}"
+                    "Email message with user query sent to back-office failed: "
+                    f"{str(e)}."
                 )
 
                 return {"messages": [confirmation], "email_sent": False}
@@ -399,8 +460,9 @@ if __name__ == "__main__":
     """
 
     # Example of user queries
-    query = "Vad är telefonnumret för felanmälan till AB-hem?"
+    # query = "Vad är telefonnumret för felanmälan till AB-hem?"
     # query = "Vem äger AB Hem?"
+    query = "Vem är VD på AB Hem?"
 
     # Trigger the Chatbot Agent flow
     run_agent(DEFAULT_PROMPT, query)

@@ -1,6 +1,3 @@
-Feature - "Send a mail when no answer is found - Backend"
-    - Evaluate valid user email format
-
 Make password secret somehow and not visible in code &
 add all config parameters in a config file(s).
 
