@@ -2,8 +2,7 @@
     "backend": {
         "max_attempts_enter_email": 2,
         "back_office_email_receiver": "paulursby@hotmail.com",
-        "back_office_email_sender": "paulursby@gmail.com",
-        "back_office_email_sender_pwd": "X"
+        "back_office_email_sender": "paulursby@gmail.com"
     },
     "logging": {
         "level_basic": "WARNING",

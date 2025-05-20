@@ -25,21 +25,17 @@ def setup_logging(config):
     Creates the log directory if it doesn't exist.
 
     Args:
-        config (dict): Configuration dictionary containing logging settings.
-                       Expected keys:
-                       - logging.log_filepath: Directory path for log files
-                       - logging.level_basic: Log level for the root logger
-                       (e.g., "DEBUG", "INFO")
+        config (Config): Configuration object with get_param method to access settings.
 
     Returns:
         None
     """
     # Create the directory if it doesn't exist
-    log_filepath = config.get("logging", {}).get("log_filepath")
+    log_filepath = config.get_param("logging", "log_filepath")
     os.makedirs(log_filepath, exist_ok=True)
 
     # Fetch log_level_basic from config
-    log_level_basic = LOG_LEVELS.get(config.get("logging", {}).get("level_basic"))
+    log_level_basic = LOG_LEVELS.get(config.get_param("logging", "level_basic"))
 
     logging.basicConfig(
         level=log_level_basic,
@@ -54,19 +50,21 @@ def setup_logging(config):
 
 
 def get_logger(name, config):
-    """Retrieves and configure a logger instance with the given name and config.
+    """
+    Retrieves and configures a logger instance with the given name and custom log level.
+
+    Creates a child logger with the specified name and sets its level according to
+    the chatbot-specific configuration setting.
 
     Args:
         name (str): The name of the logger, typically __name__ of the calling module
-        config (dict): Configuration dictionary containing logging settings.
-                       Expected keys:
-                       - logging.level_chatbot: Log level for chatbot components
+        config (Config): Configuration object with get_param method to access settings.
 
     Returns:
-        logging.Logger: A configured logger instance.
+        logging.Logger: A configured logger instance with the specified name and level.
     """
     logger = logging.getLogger(name)
-    log_level_chatbot = LOG_LEVELS.get(config.get("logging", {}).get("level_chatbot"))
+    log_level_chatbot = LOG_LEVELS.get(config.get_param("logging", "level_chatbot"))
     logger.setLevel(log_level_chatbot)
 
     return logger

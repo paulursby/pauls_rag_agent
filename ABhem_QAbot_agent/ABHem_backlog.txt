@@ -1,7 +1,6 @@
-Make password secret somehow and not visible in code &
-add all config parameters in a config file(s).
-
 Feature - "Send a mail when no answer is found - Frontend"
+
+Investigate  how to deploy it in AB Hem web page
 
 Investigate if multi-user deployment issues
 

@@ -14,7 +14,7 @@ config = Config("ABhem_QAbot_agent/config.json")
 from lib.logger_setup import get_logger  # noqa: E402 (import not at top of file)
 
 # Setup a logger which can be used by all helper functions
-logger = get_logger(__name__, config.get())
+logger = get_logger(__name__, config)
 
 
 def is_valid_email(email):

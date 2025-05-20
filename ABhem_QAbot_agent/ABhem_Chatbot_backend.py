@@ -32,9 +32,14 @@ from lib.logger_setup import get_logger, setup_logging
 # Initialize configuration
 config = Config("ABhem_QAbot_agent/config.json")
 
+# Register secure configuration parameter, by mapping parameters to env variables:
+Config.register_secure_param("backend.back_office_email_sender_pwd", "EMAIL_SENDER_PWD")
+Config.register_secure_param("backend.open_api_key", "OPENAI_API_KEY")
+Config.register_secure_param("backend.tavily_api_key", "TAVILY_API_KEY")
+
 # Setup logging facility
-setup_logging(config.get())
-logger = get_logger("ABhem_Chatbot_backend", config.get())
+setup_logging(config)
+logger = get_logger("ABhem_Chatbot_backend", config)
 logger.info("Logging facility is setup.")
 
 """
@@ -49,13 +54,18 @@ with tracing_v2_enabled():
 """
 
 # Define the search tool
+tavily_api_key = config.get_param("backend", "tavily_api_key", default="")
+logger.info("Config data is fetched to define Tavily search tool.")
+
 tool = TavilySearchResults(
+    api_key=tavily_api_key,
     max_results=10,
     include_domains=["ab-hem.se"],
     search_depth="advanced",
     # TODO: Shall this be tried out?
     # include_raw_content=True,
 )
+logger.info("Tavily search tool is defined.")
 
 
 # Define Agent State
@@ -225,8 +235,8 @@ class Agent:
         """
         # Fetch config data
         # Set default value to 3, which is used if data is unavailbale in config
-        max_attempts = (
-            Config.get().get("backend", {}).get("max_attempts_enter_email", 3)
+        max_attempts = config.get_param(
+            "backend", "max_attempts_enter_email", default="3"
         )
         logger.info("Config data is fetched for collecting email address.")
 
@@ -292,15 +302,14 @@ class Agent:
             is found
         """
         # Fetch config data
-        back_office_email_receiver = (
-            Config.get().get("backend", {}).get("back_office_email_receiver", {})
+        back_office_email_receiver = config.get_param(
+            "backend", "back_office_email_receiver", default=""
         )
-        back_office_email_sender = (
-            Config.get().get("backend", {}).get("back_office_email_sender", {})
+        back_office_email_sender = config.get_param(
+            "backend", "back_office_email_sender", default=""
         )
-        # TODO: back_office_email_sender_pwd shall be secret config
-        back_office_email_sender_pwd = (
-            Config.get().get("backend", {}).get("back_office_email_sender_pwd", {})
+        back_office_email_sender_pwd = config.get_param(
+            "backend", "back_office_email_sender_pwd", default=""
         )
         logger.info("Config data is fetched for sending email.")
 
@@ -396,7 +405,10 @@ def run_agent(system_prompt, user_query):
         str: The answer to the user's query
     """
     # Create model
-    model = ChatOpenAI(model="gpt-4o")
+    open_api_key = config.get_param("backend", "open_api_key", default="")
+    logger.info("Config data is fetched to create ChatOpenAI LLM.")
+
+    model = ChatOpenAI(model="gpt-4o", api_key=open_api_key)
     logger.info("ChatOpenAI LLM is created.")
 
     # Create state message for user query
