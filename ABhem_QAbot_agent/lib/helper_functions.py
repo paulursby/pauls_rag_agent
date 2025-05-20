@@ -6,6 +6,15 @@ pip install email-validator
 """
 
 from email_validator import EmailNotValidError, validate_email
+from lib.config_loader import Config
+
+# Initialize configuration
+config = Config("ABhem_QAbot_agent/config.json")
+
+from lib.logger_setup import get_logger  # noqa: E402 (import not at top of file)
+
+# Setup a logger which can be used by all helper functions
+logger = get_logger(__name__, config.get())
 
 
 def is_valid_email(email):

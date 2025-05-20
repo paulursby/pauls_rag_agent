@@ -1,0 +1,13 @@
+{
+    "backend": {
+        "max_attempts_enter_email": 2,
+        "back_office_email_receiver": "paulursby@hotmail.com",
+        "back_office_email_sender": "paulursby@gmail.com",
+        "back_office_email_sender_pwd": "X"
+    },
+    "logging": {
+        "level_basic": "WARNING",
+        "level_chatbot": "INFO",
+        "log_filepath": "/home/paulur/python-projects/pauls_rag_agent/Log_files"
+    }
+}

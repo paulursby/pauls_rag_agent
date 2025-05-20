@@ -3,6 +3,12 @@ add all config parameters in a config file(s).
 
 Feature - "Send a mail when no answer is found - Frontend"
 
+Investigate if multi-user deployment issues
+
 Filtrera på minimum results.score on answers
 
 Make a chatbot instead of QA bot
+
+
+Misc:
+ulrik@baard.se

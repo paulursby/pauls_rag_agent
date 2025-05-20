@@ -7,9 +7,7 @@ pip install langgraph langchain-core langchain-openai langchain-community
 tavily-python langgraph-checkpoint-sqlite
 """
 
-import logging
 import operator
-import os
 import smtplib
 import ssl
 from datetime import datetime
@@ -27,27 +25,17 @@ from langchain_core.messages import (
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
+from lib.config_loader import Config
 from lib.helper_functions import is_valid_email
+from lib.logger_setup import get_logger, setup_logging
 
-# Define the directory where you want to store the log file
-log_directory = "/home/paulur/python-projects/pauls_rag_agent/Log_files"
+# Initialize configuration
+config = Config("ABhem_QAbot_agent/config.json")
 
-# Create the directory if it doesn't exist
-os.makedirs(log_directory, exist_ok=True)
-
-# Set up the full path to the log file
-log_filepath = os.path.join(log_directory, "ABhem_Chatbot_backend.log")
-
-# Configure logging with the full filepath
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    # filename=log_filepath,
-)
-
-# Configure logging for this module
-logger = logging.getLogger("ABhem_Chatbot_backend_logger")
-logger.setLevel(logging.DEBUG)
+# Setup logging facility
+setup_logging(config.get())
+logger = get_logger("ABhem_Chatbot_backend", config.get())
+logger.info("Logging facility is setup.")
 
 """
 Content in ~/.bashrc to activate Langsmith tracing
@@ -235,8 +223,13 @@ class Agent:
                 - user_email_address (str): The collected email address if valid;
                   otherwise, the last attempt (even if invalid)
         """
-        # TODO: max_attempt shall be config parameter
-        max_attempts = 3
+        # Fetch config data
+        # Set default value to 3, which is used if data is unavailbale in config
+        max_attempts = (
+            Config.get().get("backend", {}).get("max_attempts_enter_email", 3)
+        )
+        logger.info("Config data is fetched for collecting email address.")
+
         for attempt in range(max_attempts):
             user_email_adress = input(
                 "Vänligen ange din e-postadress så återkommer vi med svar så snart som möjligt: "
@@ -298,9 +291,18 @@ class Agent:
             - Missing user query: Uses "No query found" as fallback if no HumanMessage
             is found
         """
-        # TODO: Shall be config parameter
-        back_office_email_address = "paulursby@hotmail.com"
-        # back_office_email_address = "ulrik@baard.se"
+        # Fetch config data
+        back_office_email_receiver = (
+            Config.get().get("backend", {}).get("back_office_email_receiver", {})
+        )
+        back_office_email_sender = (
+            Config.get().get("backend", {}).get("back_office_email_sender", {})
+        )
+        # TODO: back_office_email_sender_pwd shall be secret config
+        back_office_email_sender_pwd = (
+            Config.get().get("backend", {}).get("back_office_email_sender_pwd", {})
+        )
+        logger.info("Config data is fetched for sending email.")
 
         # Get user query and email from state
         user_email_address = state.get("user_email_address", "No user email provided")
@@ -330,8 +332,8 @@ class Agent:
 
         # Create email if valid email address is entered by user
         email = EmailMessage()
-        email["From"] = "paulursby@gmail.com"  # Replace with your sending email
-        email["To"] = back_office_email_address
+        email["From"] = back_office_email_sender
+        email["To"] = back_office_email_receiver
         email["Subject"] = (
             f"AB Hem Q&A Request - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         )
@@ -353,7 +355,7 @@ class Agent:
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             try:
-                server.login("paulursby@gmail.com", "enrn donl mbje rswg")
+                server.login(back_office_email_sender, back_office_email_sender_pwd)
                 server.send_message(email)
 
                 # Add a state message that email is succesfully sent
@@ -460,9 +462,9 @@ if __name__ == "__main__":
     """
 
     # Example of user queries
-    # query = "Vad är telefonnumret för felanmälan till AB-hem?"
+    query = "Vad är telefonnumret för felanmälan till AB-hem?"
     # query = "Vem äger AB Hem?"
-    query = "Vem är VD på AB Hem?"
+    # query = "Vem är VD på AB Hem?"
 
     # Trigger the Chatbot Agent flow
     run_agent(DEFAULT_PROMPT, query)
