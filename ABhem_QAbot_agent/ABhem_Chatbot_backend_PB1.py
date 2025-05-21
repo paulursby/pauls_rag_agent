@@ -27,7 +27,6 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 from lib.config_loader import Config
-from lib.helper_functions import is_valid_email
 from lib.logger_setup import get_logger, setup_logging
 
 # Initialize configuration
@@ -116,29 +115,16 @@ class Agent:
             {
                 "action": "action",
                 "await_email": "await_email",
+                "send_email": "send_email",
                 "end": END,
             },
         )
         graph.add_edge("action", "llm")
-
-        # Add conditional edge to handle pause/resume
-        graph.add_conditional_edges(
-            "await_email",
-            self.check_email_status,
-            {
-                "wait_for_email": END,  # Pause here when no email
-                "proceed_to_send": "send_email",  # Continue when email provided
-            },
-        )
+        graph.add_edge("await_email", END)  # Pause here for email collection
         graph.add_edge("send_email", END)
 
         graph.set_entry_point("llm")
-        # Compile with interrupt capability
-        self.graph = graph.compile(
-            checkpointer=checkpointer,
-            interrupt_after=["await_email"],  # Interrupt after await_email executes
-        )
-
+        self.graph = graph.compile(checkpointer=checkpointer)
         self.tools = {t.name: t for t in tools}
         self.model = model.bind_tools(tools)
 
@@ -181,7 +167,6 @@ class Agent:
             str: The name of the next node in the workflow graph to execute.
         """
         logger.info("Next step in the Agent flow will be decided.")
-
         # Fetch latest message received in the Agent
         latest_message = state["messages"][-1]
 
@@ -195,26 +180,21 @@ class Agent:
             logger.info("Next step is a tool call.")
             return "action"
 
-        # If no answer is found, next step is await email collection
+        # If no answer is found and no email yet, next step is await email collection.
         if "vi kan tyvärr inte svara på din fråga nu" in content:
-            logger.info("Next step is to await email address collection.")
-            return "await_email"
+            if not state.get("user_email_address"):
+                logger.info("Next step is to await email address collection.")
+                return "await_email"
+            # If no answer is found and email is collected, next step is sending email.
+            else:
+                logger.info(
+                    "Next step is to send email since user address is available."
+                )
+                return "send_email"
 
         # Otherwise an answer is found, next step is the END
         logger.info("Next step is to exit the Agent flow, since an answer is found.")
         return "end"
-
-    def check_email_status(self, state: AgentState) -> str:
-        """
-        Check if email has been collected to determine next step.
-        This runs after await_email and decides whether to pause or continue.
-        """
-        if state.get("user_email_address"):
-            logger.info("Email address found in state, proceeding to send email")
-            return "proceed_to_send"
-        else:
-            logger.info("No email address, pausing execution")
-            return "wait_for_email"
 
     def take_action(self, state: AgentState):
         """
@@ -316,7 +296,22 @@ class Agent:
                 user_query = message.content
                 break
 
-        # Create email
+        # No user email can be sent due to no valid user email address provided
+        if not user_email_address:
+            # Add a state message that no user email address is provided
+            # TODO: Update content to more info see old file?
+            confirmation = ChatMessage(
+                role="system",
+                content="email_failed_no_address",
+            )
+            logger.error(
+                "Email message with user query can not be sent due to no "
+                "email address provided."
+            )
+
+            return {"messages": [confirmation], "email_sent": False}
+
+        # Create email if valid email address is entered by user
         email = EmailMessage()
         email["From"] = back_office_email_sender
         email["To"] = back_office_email_receiver
@@ -405,25 +400,6 @@ def run_agent_with_checkpoint(
     else:
         logger.info(f"Resume conversation with thread_id: {thread_id}")
 
-    # Create thread configuration/graph stream
-    thread_config = {"configurable": {"thread_id": thread_id}}
-
-    # Validate email if provided
-    if user_email:
-        is_valid, validation_message = is_valid_email(user_email.strip())
-        if not is_valid:
-            logger.warning(
-                f"Invalid email address provided: {user_email} - {validation_message}"
-            )
-            return {
-                "status": "invalid_email",
-                "content": f"Ogiltig e-postadress: {validation_message}. Vänligen ange en giltig e-postadress.",
-                "thread_id": thread_id,
-            }
-        else:
-            user_email = validation_message
-            logger.info(f"Email validated and normalized: {user_email}")
-
     # Create model
     open_api_key = config.get_param("backend", "open_api_key", default="")
     logger.info("Config data is fetched to create ChatOpenAI LLM.")
@@ -431,96 +407,90 @@ def run_agent_with_checkpoint(
     model = ChatOpenAI(model="gpt-4o", api_key=open_api_key)
     logger.info("ChatOpenAI LLM is created.")
 
+    # Prepare initial state
+    if user_email:
+        # Resume: email address is available, so continue from email collection
+        logger.info("Resume execution with user email address provided.")
+        # Load existing state would normally happen automatically with checkpointing
+        # For this implementation, we'll create a state that includes the email
+        initial_state = {
+            "messages": [HumanMessage(content=user_query)],
+            "user_email_address": user_email,
+            "email_sent": False,
+            "session_id": thread_id,
+        }
+        # Add a message to trigger the no-answer flow that will go to send_email
+        initial_state["messages"].append(
+            ChatMessage(
+                role="assistant", content="Vi kan tyvärr inte svara på din fråga nu."
+            )
+        )
+    else:
+        # New conversation or continuing without email
+        logger.info(f"Start new conversation with query: {user_query}")
+        initial_state = {
+            "messages": [HumanMessage(content=user_query)],
+            "user_email_address": None,
+            "email_sent": False,
+            "session_id": thread_id,
+        }
+
+    # Create thread configuration/graph stream
+    thread_config = {"configurable": {"thread_id": thread_id}}
+
     try:
         with get_checkpointer() as checkpointer:
             # Create the Agent
-            abot = Agent(
+            agent = Agent(
                 model, [tool], system_prompt=system_prompt, checkpointer=checkpointer
             )
             logger.info("Agent is created with persistent checkpointer.")
-
-            # Check if this is a resume operation with email
-            if thread_id and user_email:
-                logger.info("Resuming conversation with email address provided.")
-
-                # First, update the checkpoint state with the email address
-                abot.graph.update_state(
-                    thread_config, {"user_email_address": user_email}
-                )
-                logger.info("Updated checkpoint state with user email address.")
-
-                # Resume graph execution from where it paused
-                # Use stream with None to continue from the current checkpoint
-                for event in abot.graph.stream(None, thread_config):
-                    # Below is just for logging purpose
-                    for v in event.values():
-                        for message in v["messages"]:
-                            # Log message info for debugging
-                            logger.debug(
-                                f"Message type: {type(message).__name__}. "
-                                f"Content: {message.content}"
-                            )
-                            # If there are tool calls, log those separately
-                            if hasattr(message, "tool_calls") and message.tool_calls:
-                                logger.debug(f"Tool calls: {message.tool_calls}")
-
-            else:
-                # New conversation
-                logger.info(f"Start new conversation with query: {user_query}")
-                initial_state = {
-                    "messages": [HumanMessage(content=user_query)],
-                    "user_email_address": None,
-                    "email_sent": False,
-                    "session_id": thread_id,
-                }
-
-                # Execute the graph
-                for event in abot.graph.stream(initial_state, thread_config):
-                    pass
-                    # TODO: Below is not working when requesting email
-                    # Below is just for logging purpose
-                    """
-                    for v in event.values():
-                        for message in v["messages"]:
-                            # Log message info for debugging
-                            logger.debug(
-                                f"Message type: {type(message).__name__}. "
-                                f"Content: {message.content}"
-                            )
-                            # If there are tool calls, log those separately
-                            if hasattr(message, "tool_calls") and message.tool_calls:
-                                logger.debug(f"Tool calls: {message.tool_calls}")
-                    # """
 
             # Track execution state
             final_ai_message = None
             awaiting_email = False
             email_status = None
 
-            # Get final state to determine response
-            final_state = abot.graph.get_state(thread_config)
+            # Execute the graph
+            for event in agent.graph.stream(initial_state, thread_config):
+                for v in event.values():
+                    for message in v.get("messages", []):
+                        # Log message for debugging
+                        logger.debug(
+                            f"Message type: {type(message).__name__}. "
+                            f"Content: {message.content}"
+                        )
 
-            # Analyze final state to determine response
-            if final_state and final_state.values:
-                state_values = final_state.values
+                        # Check for system events
+                        if hasattr(message, "role") and message.role == "system":
+                            if message.content == "awaiting_email":
+                                awaiting_email = True
+                                logger.info("System event: Awaiting user email address")
+                            elif message.content == "email_sent_success":
+                                email_status = "sent"
+                                logger.info(
+                                    "System event: Email sent successfully to "
+                                    "backoffice"
+                                )
+                            elif message.content in [
+                                "email_sent_failed",
+                                "email_failed_no_address",
+                            ]:
+                                email_status = "failed"
+                                logger.info(
+                                    "System event: Email sent to backoffice failed"
+                                )
 
-                # Check if email was succesfully sent or failed
-                if state_values.get("email_sent"):
-                    email_status = "sent"
-                elif state_values.get("user_email_address") and not state_values.get(
-                    "email_sent"
-                ):
-                    email_status = "failed"
+                        # If there are tool calls, log those separately
+                        # TODO: Check if this is working?
+                        if hasattr(message, "tool_calls") and message.tool_calls:
+                            logger.debug(f"Tool calls: {message.tool_calls}")
 
-                # Check for awaiting email state and final message on user query
-                for message in state_values.get("messages", []):
-                    if hasattr(message, "role") and message.role == "system":
-                        if message.content == "awaiting_email":
-                            awaiting_email = True
-                    elif message.type == "ai":
-                        final_ai_message = message
+                        # Save the last answer to the user from the LLM
+                        if message.type == "ai":
+                            final_ai_message = message
 
-            # Determine response based on final state
+            # Determine response based on execution outcome
             if awaiting_email and not user_email:
                 return {
                     "status": "needs_email",
