@@ -1,6 +1,9 @@
 Feature - "Send a mail when no answer is found - Frontend"
+- Check whether ChatMessage is correct to use in backend?
+- Can I change system prompt in frontend?
+- Make logfile on/off optional with config
 
-Investigate  how to deploy it in AB Hem web page
+Investigate how to deploy it in AB Hem web page
 
 Investigate if multi-user deployment issues
 
@@ -11,3 +14,18 @@ Make a chatbot instead of QA bot
 
 Misc:
 ulrik@baard.se
+
+
+if not user_email_address:
+            # Add a state message that no user email address is provided
+            # TODO: Update content to more info see old file?
+            confirmation = ChatMessage(
+                role="system",
+                content="email_failed_no_address",
+            )
+            logger.error(
+                "Email message with user query can not be sent due to no "
+                "email address provided."
+            )
+
+            return {"messages": [confirmation], "email_sent": False}

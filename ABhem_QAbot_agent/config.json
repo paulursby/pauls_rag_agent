@@ -6,7 +6,7 @@
     },
     "logging": {
         "level_basic": "WARNING",
-        "level_chatbot": "INFO",
+        "level_chatbot": "DEBUG",
         "log_filepath": "/home/paulur/python-projects/pauls_rag_agent/Log_files"
     }
 }

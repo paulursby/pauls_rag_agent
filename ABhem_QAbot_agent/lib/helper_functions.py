@@ -37,7 +37,7 @@ def is_valid_email(email):
         # Get the normalized form of the email address
         normalized_email = validation.email
 
-        return True, f"Valid email: {normalized_email}"
+        return True, normalized_email
     except EmailNotValidError as e:
         # Return False along with the error message
         return False, str(e)

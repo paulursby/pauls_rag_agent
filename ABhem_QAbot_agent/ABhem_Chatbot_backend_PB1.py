@@ -18,6 +18,7 @@ from typing import Annotated, Optional, TypedDict
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.messages import (
     AnyMessage,
+    ChatMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
@@ -26,7 +27,6 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 from lib.config_loader import Config
-from lib.helper_functions import is_valid_email
 from lib.logger_setup import get_logger, setup_logging
 
 # Initialize configuration
@@ -85,7 +85,7 @@ class Agent:
     The Agent uses a state graph to manage conversation flow, leveraging an LLM model
     for generating responses and tools for performing actions. It can route conversations
     to different paths based on the content of messages, collect email addresses, and
-    forward unresolved queries to backend support office.
+    forward unresolved queries to backend support staff.
     """
 
     def __init__(self, model, tools, checkpointer, system_prompt=""):
@@ -108,36 +108,23 @@ class Agent:
         graph.add_node("await_email", self.await_email)
         graph.add_node("send_email", self.send_email)
 
-        # Add condtional edges after have called llm
+        # Add edges
         graph.add_conditional_edges(
             "llm",
             self.route_next_step,
             {
                 "action": "action",
                 "await_email": "await_email",
+                "send_email": "send_email",
                 "end": END,
             },
         )
         graph.add_edge("action", "llm")
-
-        # Add conditional edge to handle pause/resume for collecting user email address
-        graph.add_conditional_edges(
-            "await_email",
-            self.check_email_status,
-            {
-                "wait_for_email": END,  # Pause here when no email
-                "proceed_to_send": "send_email",  # Continue when email provided
-            },
-        )
+        graph.add_edge("await_email", END)  # Pause here for email collection
         graph.add_edge("send_email", END)
 
         graph.set_entry_point("llm")
-        # Compile with interrupt capability for collecting user email address
-        self.graph = graph.compile(
-            checkpointer=checkpointer,
-            interrupt_after=["await_email"],
-        )
-
+        self.graph = graph.compile(checkpointer=checkpointer)
         self.tools = {t.name: t for t in tools}
         self.model = model.bind_tools(tools)
 
@@ -170,6 +157,7 @@ class Agent:
         Analyzes the content of the latest message to decide whether to:
         - Execute a tool call
         - Await/collect user email address for unresolved queries
+        - Send mail to backoffice for unresolved queries
         - End the conversation if an answer is provided
 
         Args:
@@ -179,7 +167,6 @@ class Agent:
             str: The name of the next node in the workflow graph to execute.
         """
         logger.info("Next step in the Agent flow will be decided.")
-
         # Fetch latest message received in the Agent
         latest_message = state["messages"][-1]
 
@@ -193,45 +180,21 @@ class Agent:
             logger.info("Next step is a tool call.")
             return "action"
 
-        # If no answer is found, next step is await email collection
+        # If no answer is found and no email yet, next step is await email collection.
         if "vi kan tyvärr inte svara på din fråga nu" in content:
-            logger.info("Next step is to await email address collection.")
-            return "await_email"
+            if not state.get("user_email_address"):
+                logger.info("Next step is to await email address collection.")
+                return "await_email"
+            # If no answer is found and email is collected, next step is sending email.
+            else:
+                logger.info(
+                    "Next step is to send email since user address is available."
+                )
+                return "send_email"
 
         # Otherwise an answer is found, next step is the END
         logger.info("Next step is to exit the Agent flow, since an answer is found.")
         return "end"
-
-    def check_email_status(self, state: AgentState) -> str:
-        """Check if email has been collected to determine next step.
-
-        Evaluates the current agent state to determine if a user email address
-        has been successfully collected. This method is typically called after
-        an email collection attempt and serves as a decision point in the
-        agent workflow to either proceed with email sending or pause execution
-        to wait for email input.
-
-        Args:
-            state: The current agent state containing user data and workflow
-                information. Expected to potentially contain a "user_email_address"
-                key with the collected email address.
-
-        Returns:
-            A string indicating the next workflow step:
-                - "proceed_to_send": Email address found, ready to send email
-                - "wait_for_email": No email address found, pause for collection
-
-        Note:
-            This method logs the decision outcome for monitoring and debugging
-            purposes. The state is accessed using .get() to safely handle
-            missing keys.
-        """
-        if state.get("user_email_address"):
-            logger.info("Email address found in state, proceeding to send email.")
-            return "proceed_to_send"
-        else:
-            logger.info("No email address, pausing execution.")
-            return "wait_for_email"
 
     def take_action(self, state: AgentState):
         """
@@ -272,37 +235,43 @@ class Agent:
             an email.
         """
         # Create a system event message indicating email collection is needed
-        email_request = SystemMessage(content="Awaiting user email address")
+        # TODO: change content to: Awaiting user email address and type of message
+        email_request = ChatMessage(
+            role="system",
+            content="awaiting_email",
+        )
         logger.info("Pausing execution to await user email address collection.")
 
         return {"messages": [email_request]}
 
     def send_email(self, state: AgentState):
-        """Send email to back office containing user query for manual handling.
+        """
+        Send an email to the back office with the user's query for manual handling.
 
-        Creates and transmits an email message to the configured back office recipient
-        containing the user's original query and contact information. Implements
-        comprehensive error handling for SMTP operations and missing data scenarios.
+        Creates and sends an email containing the user's original query and their
+        email address for follow-up. Handles success and failure scenarios.
 
         Args:
-            state (AgentState): Current agent state dictionary containing user data.
-                Required keys:
-                    - messages (List[Message]): Message history containing at least
-                      one HumanMessage with user's original query.
-                Optional keys:
-                    - user_email_address (str): User's email for follow-up contact.
-                      Defaults to empty string if not provided.
+            state (AgentState): The current state containing messages and user email.
+                Expected to contain:
+                - 'user_email_address': String with user's email (from
+                collect_email_address)
+                - 'messages': List of message objects including at least one
+                HumanMessage
 
         Returns:
-            Dict[str, Union[List[SystemMessage], bool]]: State update dictionary with:
-                - messages (List[SystemMessage]): Single-element list containing
-                  system message with outcome status.
-                - email_sent (bool): Success flag - True if SMTP transmission
-                  completed successfully, False for any failure condition.
+            dict: Dictionary containing:
+                - messages (list): List with a single ChatMessage indicating the outcome
+                - email_sent (bool): True if email was sent successfully, False
+                otherwise
 
-        Raises:
-            Exception: SMTP authentication, connection, or transmission errors are
-                caught internally and logged. No exceptions propagate to caller.
+        Error Handling:
+            - Missing/invalid email address: Returns with email_sent=False and
+            appropriate message
+            - SMTP/connection errors: Catches exceptions, logs errors, returns with
+            email_sent=False
+            - Missing user query: Uses "No query found" as fallback if no HumanMessage
+            is found
         """
         # Fetch config data
         back_office_email_receiver = config.get_param(
@@ -327,7 +296,22 @@ class Agent:
                 user_query = message.content
                 break
 
-        # Create email
+        # No user email can be sent due to no valid user email address provided
+        if not user_email_address:
+            # Add a state message that no user email address is provided
+            # TODO: Update content to more info see old file?
+            confirmation = ChatMessage(
+                role="system",
+                content="email_failed_no_address",
+            )
+            logger.error(
+                "Email message with user query can not be sent due to no "
+                "email address provided."
+            )
+
+            return {"messages": [confirmation], "email_sent": False}
+
+        # Create email if valid email address is entered by user
         email = EmailMessage()
         email["From"] = back_office_email_sender
         email["To"] = back_office_email_receiver
@@ -356,20 +340,23 @@ class Agent:
                 server.send_message(email)
 
                 # Add a state message that email is succesfully sent
-                confirmation = SystemMessage(
-                    content="Email message with user query is succesfully sent to "
-                    "back office",
+                # TODO: Update content to more info see old file?
+                confirmation = ChatMessage(
+                    role="system",
+                    content="email_sent_success",
                 )
                 logger.info(
-                    "Email message with user query is succesfully sent to back office."
+                    "Email message with user query is succesfully sent to back-office."
                 )
 
                 return {"messages": [confirmation], "email_sent": True}
 
             except Exception as e:
                 # Add a state message that sent email failed
-                confirmation = SystemMessage(
-                    content="Email message with user query sent to back office failed",
+                # TODO: Update content to more info see old file?
+                confirmation = ChatMessage(
+                    role="system",
+                    content="email_sent_failed",
                 )
                 logger.error(
                     "Email message with user query sent to back-office failed: "
@@ -381,23 +368,7 @@ class Agent:
 
 # Create persistent checkpointer
 def get_checkpointer():
-    """Get a persistent SQLite checkpointer for state management.
-
-    Creates and returns a SqliteSaver instance configured to use a local SQLite
-    database for persisting agent state checkpoints. The database file
-    'agent_checkpoints.db' will be created in the current working directory
-    if it doesn't exist.
-
-    Returns:
-        SqliteSaver: A configured SQLite-based state checkpointer instance
-            that can be used for persisting and retrieving agent execution
-            state across sessions.
-
-    Note:
-        The SQLite database connection is established using the filename
-        'agent_checkpoints.db'. Ensure the application has write permissions
-        in the current directory.
-    """
+    """Get a persistent SQLite checkpointer for state management."""
     logger.info("Get a persistent SQLite checkpointer for state management.")
     return SqliteSaver.from_conn_string("agent_checkpoints.db")
 
@@ -406,70 +377,28 @@ def get_checkpointer():
 def run_agent_with_checkpoint(
     system_prompt, user_query, thread_id=None, user_email=None
 ):
-    """Run the agent with proper checkpointing support for resumable execution.
-
-    Executes a conversational AI agent with persistent state management, supporting
-    both new conversations and resumption of existing ones. Handles email collection
-    and validation for queries requiring back-office escalation.
+    """
+    Run the agent with proper checkpointing support for resumable execution.
 
     Args:
-        system_prompt (str): The system prompt that defines the assistant's behavior
-            and context. Used to initialize the agent's persona and capabilities.
-        user_query (str): The user's question or request to be processed by the agent.
-            Ignored when resuming an existing conversation with thread_id and user_email.
-        thread_id (str, optional): Unique identifier for conversation continuity.
-            If None, generates a new UUID for a fresh conversation. If provided,
-            attempts to resume the existing conversation from its last checkpoint.
-        user_email (str, optional): User's email address for back-office communication.
-            Validated and normalized if provided. Required when resuming conversations
-            that are awaiting email collection.
+        system_prompt (str): The system prompt for the assistant
+        user_query (str): The user's question
+        thread_id (str, optional): Thread ID to resume existing conversation
+        user_email (str, optional): User's email address if collecting
 
     Returns:
-        dict: Response dictionary containing execution results with the following keys:
-            - 'status' (str): Execution status indicator:
-                * 'answer_found': Agent successfully answered the query
-                * 'needs_email': Query requires escalation, awaiting email address
-                * 'email_sent': Email successfully sent to back-office
-                * 'email_failed': Email sending failed
-                * 'invalid_email': Provided email address is invalid
-                * 'error': Unexpected error occurred during execution
-            - 'content' (str): Response content or error message in Swedish
-            - 'thread_id' (str): Thread identifier for conversation continuity
-
-    Raises:
-        Exception: Captures and logs any unexpected errors during agent execution,
-            returning an error status instead of propagating exceptions.
-
-    Note:
-        The function maintains conversation state using SQLite checkpointing,
-        allowing for interruption and resumption of complex multi-turn interactions.
-        Email validation is performed using the is_valid_email utility function.
+        dict: A dictionary containing:
+            - 'status': str - 'answer_found', 'needs_email', 'email_sent',
+            'email_failed', or 'error'
+            - 'content': str - The response content
+            - 'thread_id': str - Thread ID for conversation continuity
     """
     # Generate thread_id if not provided (new conversation)
     if not thread_id:
         thread_id = str(uuid.uuid4())
-        logger.info(f"Generate new thread_id: {thread_id}.")
+        logger.info(f"Generate new thread_id: {thread_id}")
     else:
-        logger.info(f"Resume conversation with thread_id: {thread_id}.")
-
-    # Create thread configuration/graph stream
-    thread_config = {"configurable": {"thread_id": thread_id}}
-
-    # Validate email if provided
-    if user_email:
-        is_valid, validation_message = is_valid_email(user_email.strip())
-        if not is_valid:
-            logger.warning(
-                f"Invalid email address provided: {user_email} - {validation_message}."
-            )
-            return {
-                "status": "invalid_email",
-                "content": f"Ogiltig e-postadress: {validation_message}. Vänligen ange en giltig e-postadress.",
-                "thread_id": thread_id,
-            }
-        else:
-            user_email = validation_message
-            logger.info(f"Email validated and normalized: {user_email}.")
+        logger.info(f"Resume conversation with thread_id: {thread_id}")
 
     # Create model
     open_api_key = config.get_param("backend", "open_api_key", default="")
@@ -478,133 +407,115 @@ def run_agent_with_checkpoint(
     model = ChatOpenAI(model="gpt-4o", api_key=open_api_key)
     logger.info("ChatOpenAI LLM is created.")
 
+    # Prepare initial state
+    if user_email:
+        # Resume: email address is available, so continue from email collection
+        logger.info("Resume execution with user email address provided.")
+        # Load existing state would normally happen automatically with checkpointing
+        # For this implementation, we'll create a state that includes the email
+        initial_state = {
+            "messages": [HumanMessage(content=user_query)],
+            "user_email_address": user_email,
+            "email_sent": False,
+            "session_id": thread_id,
+        }
+        # Add a message to trigger the no-answer flow that will go to send_email
+        initial_state["messages"].append(
+            ChatMessage(
+                role="assistant", content="Vi kan tyvärr inte svara på din fråga nu."
+            )
+        )
+    else:
+        # New conversation or continuing without email
+        logger.info(f"Start new conversation with query: {user_query}")
+        initial_state = {
+            "messages": [HumanMessage(content=user_query)],
+            "user_email_address": None,
+            "email_sent": False,
+            "session_id": thread_id,
+        }
+
+    # Create thread configuration/graph stream
+    thread_config = {"configurable": {"thread_id": thread_id}}
+
     try:
         with get_checkpointer() as checkpointer:
             # Create the Agent
-            abot = Agent(
+            agent = Agent(
                 model, [tool], system_prompt=system_prompt, checkpointer=checkpointer
             )
             logger.info("Agent is created with persistent checkpointer.")
-
-            # Check if this is a resume operation with email
-            if thread_id and user_email:
-                logger.info("Resuming conversation with email address provided.")
-
-                # First, update the checkpoint state with the email address
-                abot.graph.update_state(
-                    thread_config, {"user_email_address": user_email}
-                )
-                logger.info("Updated checkpoint state with user email address.")
-
-                # Resume graph execution from where it paused
-                # Use stream with None to continue from the current checkpoint
-                for event in abot.graph.stream(None, thread_config):
-                    # Below is just for logging purpose
-                    for v in event.values():
-                        for message in v["messages"]:
-                            # Log message info for debugging
-                            logger.debug(
-                                f"Message type: {type(message).__name__}. "
-                                f"Content: {message.content}."
-                            )
-                            # If there are tool calls, log those separately
-                            if hasattr(message, "tool_calls") and message.tool_calls:
-                                logger.debug(f"Tool calls: {message.tool_calls}.")
-
-            else:
-                # New conversation
-                logger.info(f"Start new conversation with query: {user_query}.")
-                initial_state = {
-                    "messages": [HumanMessage(content=user_query)],
-                    "user_email_address": None,
-                    "email_sent": False,
-                    "session_id": thread_id,
-                }
-
-                # Execute the graph
-                for event in abot.graph.stream(initial_state, thread_config):
-                    # Below is just for logging purpose
-                    if any(event.values()):  # Check if event values are not empty
-                        # print(f"event.value: {event.values()}")
-                        for v in event.values():
-                            for message in v["messages"]:
-                                # Log message info for debugging
-                                logger.debug(
-                                    f"Message type: {type(message).__name__}. "
-                                    f"Content: {message.content}."
-                                )
-                                # If there are tool calls, log those separately
-                                if (
-                                    hasattr(message, "tool_calls")
-                                    and message.tool_calls
-                                ):
-                                    logger.debug(f"Tool calls: {message.tool_calls}.")
-                    # """
 
             # Track execution state
             final_ai_message = None
             awaiting_email = False
             email_status = None
 
-            # Get final state to determine response
-            final_state = abot.graph.get_state(thread_config)
+            # Execute the graph
+            for event in agent.graph.stream(initial_state, thread_config):
+                for v in event.values():
+                    for message in v.get("messages", []):
+                        # Log message for debugging
+                        logger.debug(
+                            f"Message type: {type(message).__name__}. "
+                            f"Content: {message.content}"
+                        )
 
-            # Analyze final state to determine response
-            if final_state and final_state.values:
-                state_values = final_state.values
+                        # Check for system events
+                        if hasattr(message, "role") and message.role == "system":
+                            if message.content == "awaiting_email":
+                                awaiting_email = True
+                                logger.info("System event: Awaiting user email address")
+                            elif message.content == "email_sent_success":
+                                email_status = "sent"
+                                logger.info(
+                                    "System event: Email sent successfully to "
+                                    "backoffice"
+                                )
+                            elif message.content in [
+                                "email_sent_failed",
+                                "email_failed_no_address",
+                            ]:
+                                email_status = "failed"
+                                logger.info(
+                                    "System event: Email sent to backoffice failed"
+                                )
 
-                # Check if email was succesfully sent or failed
-                if state_values.get("email_sent"):
-                    email_status = "sent"
-                elif state_values.get("user_email_address") and not state_values.get(
-                    "email_sent"
-                ):
-                    email_status = "failed"
+                        # If there are tool calls, log those separately
+                        # TODO: Check if this is working?
+                        if hasattr(message, "tool_calls") and message.tool_calls:
+                            logger.debug(f"Tool calls: {message.tool_calls}")
 
-                # Check for awaiting email state and final message on user query
-                for message in state_values.get("messages", []):
-                    # if hasattr(message, "role") and message.role == "system":
-                    if (
-                        message.type == "system"
-                        and message.content == "Awaiting user email address"
-                    ):
-                        awaiting_email = True
-                    elif message.type == "ai":
-                        final_ai_message = message
+                        # Save the last answer to the user from the LLM
+                        if message.type == "ai":
+                            final_ai_message = message
 
-            # Determine response based on final state
+            # Determine response based on execution outcome
             if awaiting_email and not user_email:
-                logger.info(
-                    "Email will be sent to back office. Waiting for user email address."
-                )
                 return {
                     "status": "needs_email",
                     "content": "Vi kan tyvärr inte svara på din fråga nu.",
                     "thread_id": thread_id,
                 }
             elif email_status == "sent":
-                logger.info("Email successfully sent to back office.")
                 return {
                     "status": "email_sent",
                     "content": "Tack! Vi kommer att skicka svar till din e-postadress så snart som möjligt.",
                     "thread_id": thread_id,
                 }
             elif email_status == "failed":
-                logger.error("Email sent to back office failed.")
                 return {
                     "status": "email_failed",
                     "content": "Det gick inte att skicka din förfrågan. Vänligen försök igen senare.",
                     "thread_id": thread_id,
                 }
             elif final_ai_message:
-                logger.info("Answer on user query is found.")
                 return {
                     "status": "answer_found",
                     "content": final_ai_message.content,
                     "thread_id": thread_id,
                 }
             else:
-                logger.error("Unknown error in run_agent_with_checkpoint.")
                 return {
                     "status": "error",
                     "content": "Ett fel uppstod. Vänligen försök igen.",
@@ -612,7 +523,7 @@ def run_agent_with_checkpoint(
                 }
 
     except Exception as e:
-        logger.error(f"Error in run_agent_with_checkpoint: {str(e)}.")
+        logger.error(f"Error in run_agent_with_checkpoint: {str(e)}")
         return {
             "status": "error",
             "content": "Ett fel uppstod. Vänligen försök igen.",
