@@ -30,22 +30,33 @@ def setup_logging(config):
     Returns:
         None
     """
-    # Create the directory if it doesn't exist
-    log_filepath = config.get_param("logging", "log_filepath")
-    os.makedirs(log_filepath, exist_ok=True)
-
     # Fetch log_level_basic from config
     log_level_basic = LOG_LEVELS.get(config.get_param("logging", "level_basic"))
+
+    # Check if logging to file is enabled
+    logging_to_file = config.get_param("logging", "logging_to_file").upper() == "ON"
+    logging_to_stdout = config.get_param("logging", "logging_to_stdout").upper() == "ON"
+
+    # Prepare handlers list
+    handlers = []
+
+    # Conditionally add console handler
+    if logging_to_stdout:
+        handlers.append(logging.StreamHandler())
+
+    # Conditionally add file handler
+    if logging_to_file:
+        log_filepath = config.get_param("logging", "log_filepath")
+        # Create the directory if it doesn't exist
+        os.makedirs(log_filepath, exist_ok=True)
+        handlers.append(
+            logging.FileHandler(os.path.join(log_filepath, "ABhem_Chatbot_backend.log"))
+        )
 
     logging.basicConfig(
         level=log_level_basic,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(
-                os.path.join(log_filepath, "ABhem_Chatbot_backend.log")
-            ),
-            logging.StreamHandler(),
-        ],
+        handlers=handlers,
     )
 
 
